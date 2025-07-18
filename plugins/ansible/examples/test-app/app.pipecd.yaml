@@ -1,0 +1,28 @@
+apiVersion: pipecd.dev/v1beta1
+kind: Application
+metadata:
+  name: ansible-test-app
+spec:
+  name: ansible-test-app
+  description: Test application using Ansible plugin with remote SSH connection
+  labels:
+    env: test
+    plugin: ansible
+  
+  # Ansible plugin configuration
+  plugins:
+    ansible:
+      playbook:
+        path: playbook.yml
+        inventory: inventory
+        verbosity: 2
+        extraVars:
+          test_var: "hello_world"
+          deployment_time: "{{ ansible_date_time.iso8601 }}"
+  
+  # Simple pipeline for testing
+  pipeline:
+    stages:
+      - name: ANSIBLE_SYNC
+        with:
+          timeout: 300

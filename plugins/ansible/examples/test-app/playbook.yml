@@ -1,0 +1,38 @@
+---
+- name: Test Ansible Plugin
+  hosts: target_host
+  gather_facts: yes
+  
+  tasks:
+    - name: Debug message
+      debug:
+        msg: "Hello from PipeCD Ansible Plugin!"
+        
+    - name: Test connectivity
+      ping:
+        
+    - name: Display system info
+      debug:
+        msg: |
+          Operating System: {{ ansible_distribution }} {{ ansible_distribution_version }}
+          Hostname: {{ ansible_hostname }}
+          Python Version: {{ ansible_python_version }}
+          
+    - name: Create test directory
+      file:
+        path: /tmp/pipecd-ansible-test
+        state: directory
+        mode: '0755'
+        
+    - name: Create test file
+      copy:
+        content: |
+          PipeCD Ansible Plugin Test
+          Timestamp: {{ ansible_date_time.iso8601 }}
+          Host: {{ ansible_hostname }}
+        dest: /tmp/pipecd-ansible-test/test.txt
+        mode: '0644'
+        
+    - name: Display test file content
+      debug:
+        msg: "Test file created at /tmp/pipecd-ansible-test/test.txt"
