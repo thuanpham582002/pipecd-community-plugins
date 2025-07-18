@@ -2,7 +2,7 @@ apiVersion: pipecd.dev/v1beta1
 kind: Application
 spec:
   name: ansible-test-app
-  description: Test application using Ansible plugin
+  description: Test application using Ansible plugin with remote SSH connection
   labels:
     env: test
     plugin: ansible

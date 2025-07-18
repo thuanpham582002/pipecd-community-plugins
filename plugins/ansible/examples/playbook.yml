@@ -1,7 +1,6 @@
 ---
 - name: Test Ansible Plugin
-  hosts: localhost
-  connection: local
+  hosts: target_host
   gather_facts: yes
   
   tasks:
