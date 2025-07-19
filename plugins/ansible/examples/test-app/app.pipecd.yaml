@@ -1,7 +1,5 @@
 apiVersion: pipecd.dev/v1beta1
-kind: Application
-metadata:
-  name: ansible-test-app
+kind: Piped
 spec:
   name: ansible-test-app
   description: Test application using Ansible plugin with remote SSH connection
