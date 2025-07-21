@@ -16,10 +16,12 @@ package deployment
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 
 	"github.com/pipe-cd/community-plugins/plugins/ansible/config"
 	sdk "github.com/pipe-cd/piped-plugin-sdk-go"
@@ -38,11 +40,56 @@ func TestPlugin_DetermineStrategy(t *testing.T) {
 	ctx := context.Background()
 	cfg := &config.AnsiblePluginConfig{}
 
-	input := &sdk.DetermineStrategyInput[config.AnsibleApplicationSpec]{}
+	t.Run("with pipeline stages", func(t *testing.T) {
+		// Load test application config with pipeline stages
+		appConfig := sdk.LoadApplicationConfigForTest[config.AnsibleApplicationSpec](t, "../examples/test-app/app.pipecd.yaml", "ansible")
 
-	resp, err := p.DetermineStrategy(ctx, cfg, input)
-	require.NoError(t, err)
-	assert.Equal(t, sdk.SyncStrategyQuickSync, resp.Strategy)
+		deploymentSource := &sdk.DeploymentSource[config.AnsibleApplicationSpec]{
+			ApplicationConfig: appConfig,
+		}
+
+		input := &sdk.DetermineStrategyInput[config.AnsibleApplicationSpec]{
+			Request: sdk.DetermineStrategyRequest[config.AnsibleApplicationSpec]{
+				TargetDeploymentSource: *deploymentSource,
+			},
+		}
+
+		resp, err := p.DetermineStrategy(ctx, cfg, input)
+		require.NoError(t, err)
+		assert.Equal(t, sdk.SyncStrategyPipelineSync, resp.Strategy)
+	})
+
+	t.Run("without pipeline stages", func(t *testing.T) {
+		// Create a basic app config file without pipeline stages for testing
+		basicConfig := `apiVersion: pipecd.dev/v1beta1
+kind: Application
+spec:
+  name: ansible-test-app
+  plugins:
+    ansible:
+      playbook:
+        path: playbook.yml`
+
+		// Write temp config file
+		tmpFile := t.TempDir() + "/app.pipecd.yaml"
+		require.NoError(t, os.WriteFile(tmpFile, []byte(basicConfig), 0644))
+
+		appConfig := sdk.LoadApplicationConfigForTest[config.AnsibleApplicationSpec](t, tmpFile, "ansible")
+
+		deploymentSource := &sdk.DeploymentSource[config.AnsibleApplicationSpec]{
+			ApplicationConfig: appConfig,
+		}
+
+		input := &sdk.DetermineStrategyInput[config.AnsibleApplicationSpec]{
+			Request: sdk.DetermineStrategyRequest[config.AnsibleApplicationSpec]{
+				TargetDeploymentSource: *deploymentSource,
+			},
+		}
+
+		resp, err := p.DetermineStrategy(ctx, cfg, input)
+		require.NoError(t, err)
+		assert.Equal(t, sdk.SyncStrategyPipelineSync, resp.Strategy)
+	})
 }
 
 func TestBuildQuickSync(t *testing.T) {
@@ -56,9 +103,11 @@ func TestBuildQuickSync(t *testing.T) {
 			autoRollback: false,
 			expected: []sdk.QuickSyncStage{
 				{
-					Name:               "ANSIBLE_SYNC",
-					Description:        "Execute Ansible playbook",
-					Metadata:           map[string]string{},
+					Name:        "ANSIBLE_SYNC",
+					Description: "Execute Ansible playbook",
+					Metadata: map[string]string{
+						sdk.MetadataKeyStageDisplay: "Deploy Ansible Configuration",
+					},
 					AvailableOperation: sdk.ManualOperationNone,
 				},
 			},
@@ -68,9 +117,11 @@ func TestBuildQuickSync(t *testing.T) {
 			autoRollback: true,
 			expected: []sdk.QuickSyncStage{
 				{
-					Name:               "ANSIBLE_SYNC",
-					Description:        "Execute Ansible playbook",
-					Metadata:           map[string]string{},
+					Name:        "ANSIBLE_SYNC",
+					Description: "Execute Ansible playbook",
+					Metadata: map[string]string{
+						sdk.MetadataKeyStageDisplay: "Deploy Ansible Configuration",
+					},
 					AvailableOperation: sdk.ManualOperationNone,
 				},
 			},
@@ -86,21 +137,49 @@ func TestBuildQuickSync(t *testing.T) {
 }
 
 func TestBuildPipeline(t *testing.T) {
-	stages := []sdk.StageConfig{
-		{Name: "ANSIBLE_SYNC", Index: 0},
-	}
+	t.Run("with stages", func(t *testing.T) {
+		stages := []sdk.StageConfig{
+			{Name: "ANSIBLE_SYNC", Index: 0},
+		}
 
-	result := buildPipeline(stages, false)
+		result, err := buildPipeline(stages, false, zap.NewNop())
+		assert.NoError(t, err)
 
-	expected := []sdk.PipelineStage{
-		{
-			Name:               "ANSIBLE_SYNC",
-			Index:              0,
-			Rollback:           false,
-			Metadata:           map[string]string{},
-			AvailableOperation: sdk.ManualOperationNone,
-		},
-	}
+		expected := []sdk.PipelineStage{
+			{
+				Name:    "ANSIBLE_SYNC",
+				Index:   0,
+				Rollback: false,
+				Metadata: map[string]string{
+					sdk.MetadataKeyStageDisplay: "Deploy Ansible Configuration",
+				},
+				AvailableOperation: sdk.ManualOperationNone,
+			},
+		}
 
-	assert.Equal(t, expected, result)
+		assert.Equal(t, expected, result)
+	})
+
+	t.Run("without stages", func(t *testing.T) {
+		// Empty stages should create a default ANSIBLE_SYNC stage
+		stages := []sdk.StageConfig{}
+
+		result, err := buildPipeline(stages, false, zap.NewNop())
+		assert.NoError(t, err)
+
+		expected := []sdk.PipelineStage{
+			{
+				Name:    "ANSIBLE_SYNC",
+				Index:   0,
+				Rollback: false,
+				Metadata: map[string]string{
+					sdk.MetadataKeyStageDisplay: "Deploy Ansible Configuration",
+				},
+				AvailableOperation: sdk.ManualOperationNone,
+			},
+		}
+
+		assert.Equal(t, expected, result)
+		assert.Len(t, result, 1)
+	})
 }

@@ -22,7 +22,10 @@ import (
 )
 
 func main() {
-	plugin, err := sdk.NewPlugin("0.1.0", sdk.WithDeploymentPlugin(&deployment.Plugin{}))
+	plugin, err := sdk.NewPlugin("0.1.0", 
+		sdk.WithDeploymentPlugin(&deployment.Plugin{}),
+		sdk.WithLivestatePlugin(&deployment.Plugin{}),
+	)
 	if err != nil {
 		log.Fatalln(err)
 	}
