@@ -148,7 +148,7 @@ func initialMetadata(s sdk.StageConfig, logger *zap.Logger) (map[string]string, 
 
 func buildPipeline(stages []sdk.StageConfig, autoRollback bool, logger *zap.Logger) ([]sdk.PipelineStage, error) {
 	out := make([]sdk.PipelineStage, 0, len(stages))
-	
+
 	// If no stages are provided, create a default ANSIBLE_SYNC stage
 	if len(stages) == 0 {
 		metadata, err := initialMetadata(sdk.StageConfig{Name: string(AnsibleSync)}, logger)
@@ -200,23 +200,23 @@ func (p *Plugin) executeAnsibleSyncStage(ctx context.Context, cfg *config.Ansibl
 	}
 
 	lp.Infof("🎯 Executing deployment across %d deploy target(s)", len(dts))
-	
+
 	// Execute playbook for each deploy target
 	for i, dt := range dts {
 		lp.Infof("📋 Deploy Target %d/%d: %s", i+1, len(dts), dt.Name)
-		
+
 		// Log deploy target labels for debugging
 		if len(dt.Labels) > 0 {
 			lp.Infof("🏷️  Target labels: %v", dt.Labels)
 		}
 
 		status := p.executeAnsiblePlaybook(ctx, cfg, &dt.Config, &appCfg.Spec.Playbook, input)
-		
+
 		if status != sdk.StageStatusSuccess {
 			lp.Errorf("❌ Failed to execute playbook for deploy target: %s", dt.Name)
 			return status
 		}
-		
+
 		lp.Infof("✅ Successfully executed playbook for deploy target: %s", dt.Name)
 	}
 
@@ -232,19 +232,14 @@ func (p *Plugin) executeAnsiblePlaybook(ctx context.Context, cfg *config.Ansible
 	lp.Infof("📁 Playbook: %s", playbookConfig.Path)
 	lp.Infof("🎯 Target directory: %s", input.Request.TargetDeploymentSource.ApplicationDirectory)
 
-	ansiblePath := dtConfig.AnsiblePath
-	if ansiblePath == "" {
-		ansiblePath = "ansible-playbook"
-	}
-	lp.Infof("⚙️  Ansible executable: %s", ansiblePath)
-
-	playbookPath := filepath.Join(input.Request.TargetDeploymentSource.ApplicationDirectory, playbookConfig.Path)
+	appDir := input.Request.TargetDeploymentSource.ApplicationDirectory
+	playbookPath := filepath.Join(appDir, playbookConfig.Path)
 
 	if _, err := os.Stat(playbookPath); os.IsNotExist(err) {
 		lp.Errorf("❌ Playbook file does not exist: %s", playbookPath)
 
 		// Debug: List directory contents to help diagnose
-		if dirContent, err := os.ReadDir(input.Request.TargetDeploymentSource.ApplicationDirectory); err == nil {
+		if dirContent, err := os.ReadDir(appDir); err == nil {
 			lp.Infof("📂 ApplicationDirectory contents:")
 			for _, entry := range dirContent {
 				lp.Infof("  - %s (isDir: %v)", entry.Name(), entry.IsDir())
@@ -256,139 +251,9 @@ func (p *Plugin) executeAnsiblePlaybook(ctx context.Context, cfg *config.Ansible
 
 	lp.Infof("✅ Playbook file found: %s", playbookPath)
 
-	// Build command arguments
+	// Build command arguments using helper functions
 	lp.Infof("🔧 Building ansible-playbook arguments...")
-	args := []string{playbookPath}
-
-	// Inventory
-	inventory := playbookConfig.Inventory
-	if inventory == "" {
-		inventory = dtConfig.Inventory
-	}
-	if inventory != "" {
-		inventoryPath := filepath.Join(input.Request.TargetDeploymentSource.ApplicationDirectory, inventory)
-		args = append(args, "-i", inventoryPath)
-		lp.Infof("📋 Using inventory: %s", inventoryPath)
-	} else {
-		lp.Infof("📋 No inventory specified, using default")
-	}
-
-	// Extra variables
-	if len(playbookConfig.ExtraVars) > 0 {
-		extraVars := make([]string, 0, len(playbookConfig.ExtraVars))
-		for k, v := range playbookConfig.ExtraVars {
-			extraVars = append(extraVars, fmt.Sprintf("%s=%s", k, v))
-		}
-		args = append(args, "--extra-vars", strings.Join(extraVars, " "))
-		lp.Infof("🔧 Extra variables: %v", playbookConfig.ExtraVars)
-	}
-
-	// Tags
-	if len(playbookConfig.Tags) > 0 {
-		args = append(args, "--tags", strings.Join(playbookConfig.Tags, ","))
-		lp.Infof("🏷️  Running with tags: %v", playbookConfig.Tags)
-	}
-
-	// Skip tags
-	if len(playbookConfig.SkipTags) > 0 {
-		args = append(args, "--skip-tags", strings.Join(playbookConfig.SkipTags, ","))
-		lp.Infof("🚫 Skipping tags: %v", playbookConfig.SkipTags)
-	}
-
-	// Limit
-	if playbookConfig.Limit != "" {
-		args = append(args, "--limit", playbookConfig.Limit)
-		lp.Infof("🎯 Limiting to hosts: %s", playbookConfig.Limit)
-	}
-
-	// Verbosity
-	if playbookConfig.Verbosity > 0 {
-		verbosity := strings.Repeat("v", playbookConfig.Verbosity)
-		args = append(args, fmt.Sprintf("-%s", verbosity))
-		lp.Infof("📢 Verbosity level: %d", playbookConfig.Verbosity)
-	}
-
-	// Check mode
-	if playbookConfig.CheckMode {
-		args = append(args, "--check")
-		lp.Infof("🔍 Running in check mode (dry-run)")
-	}
-
-	// Diff mode
-	if playbookConfig.DiffMode {
-		args = append(args, "--diff")
-		lp.Infof("📊 Diff mode enabled")
-	}
-
-	// Vault
-	vault := playbookConfig.Vault
-	if vault == "" {
-		vault = dtConfig.Vault
-	}
-	if vault != "" {
-		vaultPath := filepath.Join(input.Request.TargetDeploymentSource.ApplicationDirectory, vault)
-		args = append(args, "--vault-password-file", vaultPath)
-		lp.Infof("🔐 Using vault password file: %s", vaultPath)
-	}
-
-	// Private key
-	if playbookConfig.PrivateKey != "" {
-		keyPath := filepath.Join(input.Request.TargetDeploymentSource.ApplicationDirectory, playbookConfig.PrivateKey)
-		args = append(args, "--private-key", keyPath)
-		lp.Infof("🔑 Using private key: %s", keyPath)
-	}
-
-	// Remote user
-	if playbookConfig.RemoteUser != "" {
-		args = append(args, "--user", playbookConfig.RemoteUser)
-		lp.Infof("👤 Remote user: %s", playbookConfig.RemoteUser)
-	}
-
-	// Become user
-	if playbookConfig.BecomeUser != "" {
-		args = append(args, "--become", "--become-user", playbookConfig.BecomeUser)
-		lp.Infof("🔓 Become user: %s", playbookConfig.BecomeUser)
-	}
-
-	// Deploy target specific configurations
-	// SSH settings from deploy target
-	if dtConfig.SSH != nil {
-		if dtConfig.SSH.User != "" {
-			args = append(args, "--user", dtConfig.SSH.User)
-			lp.Infof("👤 SSH user (from deploy target): %s", dtConfig.SSH.User)
-		}
-		if dtConfig.SSH.PrivateKeyFile != "" {
-			keyPath := filepath.Join(input.Request.TargetDeploymentSource.ApplicationDirectory, dtConfig.SSH.PrivateKeyFile)
-			args = append(args, "--private-key", keyPath)
-			lp.Infof("🔑 SSH private key (from deploy target): %s", keyPath)
-		}
-		if dtConfig.SSH.Port > 0 {
-			args = append(args, "--extra-vars", fmt.Sprintf("ansible_ssh_port=%d", dtConfig.SSH.Port))
-			lp.Infof("🔌 SSH port (from deploy target): %d", dtConfig.SSH.Port)
-		}
-	}
-
-	// Connection timeout from deploy target
-	if dtConfig.ConnectionTimeout > 0 {
-		args = append(args, "--extra-vars", fmt.Sprintf("ansible_ssh_timeout=%d", dtConfig.ConnectionTimeout))
-		lp.Infof("⏰ SSH connection timeout: %d seconds", dtConfig.ConnectionTimeout)
-	}
-
-	// Host key checking
-	if dtConfig.HostKeyChecking != nil {
-		hostKeyCheck := "True"
-		if !*dtConfig.HostKeyChecking {
-			hostKeyCheck = "False"
-		}
-		args = append(args, "--extra-vars", fmt.Sprintf("ansible_ssh_host_key_checking=%s", hostKeyCheck))
-		lp.Infof("🔒 SSH host key checking: %s", hostKeyCheck)
-	}
-
-	// Extra flags from deploy target
-	if len(dtConfig.ExtraFlags) > 0 {
-		args = append(args, dtConfig.ExtraFlags...)
-		lp.Infof("🔧 Extra flags (from deploy target): %v", dtConfig.ExtraFlags)
-	}
+	ansiblePath, args := p.buildAnsibleCommand(dtConfig, playbookConfig, appDir, false, false, lp)
 
 	lp.Infof("🚀 Executing ansible-playbook command: %s %s", ansiblePath, strings.Join(args, " "))
 
@@ -416,7 +281,7 @@ func (p *Plugin) executeAnsiblePlaybook(ctx context.Context, cfg *config.Ansible
 	} else if playbookConfig.Timeout > 0 {
 		lp.Infof("⏰ Using playbook timeout: %d seconds", timeout)
 	}
-	
+
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		cmdCtx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
@@ -425,13 +290,12 @@ func (p *Plugin) executeAnsiblePlaybook(ctx context.Context, cfg *config.Ansible
 
 	cmd := exec.CommandContext(cmdCtx, ansiblePath, args...)
 	cmd.Dir = workingDir
-	
-	// Set up environment variables
-	env := os.Environ()
+
+	// Set up environment variables using helper function
+	env := p.setupEnvironment(dtConfig)
 	if len(dtConfig.Env) > 0 {
 		lp.Infof("🌍 Setting environment variables from deploy target:")
 		for key, value := range dtConfig.Env {
-			env = append(env, fmt.Sprintf("%s=%s", key, value))
 			lp.Infof("  %s=%s", key, value)
 		}
 	}
@@ -515,7 +379,7 @@ func (p *Plugin) GetLivestate(ctx context.Context, cfg *config.AnsiblePluginConf
 // getAnsibleLiveState checks the current state of ansible resources
 func (p *Plugin) getAnsibleLiveState(ctx context.Context, cfg *config.AnsiblePluginConfig, dts []*sdk.DeployTarget[config.AnsibleDeployTargetConfig], playbookConfig *config.AnsiblePlaybookManifest, input *sdk.GetLivestateInput[config.AnsibleApplicationSpec]) (*sdk.ApplicationLiveState, error) {
 	resources := make([]sdk.ResourceState, 0)
-	
+
 	// Handle multiple deploy targets or default configuration
 	if len(dts) == 0 {
 		// Use default configuration
@@ -546,7 +410,7 @@ func (p *Plugin) checkAnsibleResource(ctx context.Context, cfg *config.AnsiblePl
 	// Check if playbook file exists
 	playbookPath := filepath.Join(input.Request.DeploymentSource.ApplicationDirectory, playbookConfig.Path)
 	resourceID := fmt.Sprintf("ansible-playbook-%s-%s", deployTargetName, playbookConfig.Path)
-	
+
 	resourceState := &sdk.ResourceState{
 		ID:           resourceID,
 		Name:         fmt.Sprintf("Ansible Playbook (%s)", playbookConfig.Path),
@@ -554,10 +418,10 @@ func (p *Plugin) checkAnsibleResource(ctx context.Context, cfg *config.AnsiblePl
 		DeployTarget: deployTargetName,
 		CreatedAt:    time.Now(),
 		ResourceMetadata: map[string]string{
-			"playbook_path":   playbookConfig.Path,
-			"deploy_target":   deployTargetName,
-			"verbosity":       fmt.Sprintf("%d", playbookConfig.Verbosity),
-			"check_mode":      fmt.Sprintf("%t", playbookConfig.CheckMode),
+			"playbook_path": playbookConfig.Path,
+			"deploy_target": deployTargetName,
+			"verbosity":     fmt.Sprintf("%d", playbookConfig.Verbosity),
+			"check_mode":    fmt.Sprintf("%t", playbookConfig.CheckMode),
 		},
 	}
 
@@ -603,9 +467,9 @@ func (p *Plugin) checkAnsibleResource(ctx context.Context, cfg *config.AnsiblePl
 		// Test connectivity with ansible ping (with timeout)
 		connectivityCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		
+
 		pingCmd := exec.CommandContext(connectivityCtx, "ansible", "all", "-i", inventoryPath, "-m", "ping", "--one-line")
-		
+
 		// Add SSH settings if present
 		if dtConfig.SSH != nil {
 			if dtConfig.SSH.User != "" {
@@ -625,7 +489,7 @@ func (p *Plugin) checkAnsibleResource(ctx context.Context, cfg *config.AnsiblePl
 			}
 		}
 		pingCmd.Env = env
-		
+
 		output, err := pingCmd.Output()
 		if err != nil {
 			resourceState.HealthStatus = sdk.ResourceHealthStateUnhealthy
@@ -652,7 +516,7 @@ func (p *Plugin) checkAnsibleResource(ctx context.Context, cfg *config.AnsiblePl
 func (p *Plugin) getAnsibleSyncState(ctx context.Context, cfg *config.AnsiblePluginConfig, dts []*sdk.DeployTarget[config.AnsibleDeployTargetConfig], playbookConfig *config.AnsiblePlaybookManifest, input *sdk.GetLivestateInput[config.AnsibleApplicationSpec]) (*sdk.ApplicationSyncState, error) {
 	// For ansible, sync state is determined by running playbook in check mode
 	// and comparing the output to see if any changes would be made
-	
+
 	// Use first deploy target for sync check (or default config)
 	var dtConfig *config.AnsibleDeployTargetConfig
 	deployTargetName := "default"
@@ -694,48 +558,14 @@ func (p *Plugin) getAnsibleSyncState(ctx context.Context, cfg *config.AnsiblePlu
 
 // runAnsibleCheckMode runs ansible-playbook in check mode to detect configuration drift
 func (p *Plugin) runAnsibleCheckMode(ctx context.Context, cfg *config.AnsiblePluginConfig, dtConfig *config.AnsibleDeployTargetConfig, playbookConfig *config.AnsiblePlaybookManifest, input *sdk.GetLivestateInput[config.AnsibleApplicationSpec]) (bool, string, error) {
-	ansiblePath := dtConfig.AnsiblePath
-	if ansiblePath == "" {
-		ansiblePath = "ansible-playbook"
-	}
+	// Create a dummy log persister for check mode (since we don't have access to stage log persister here)
+	// We'll use a simple logger that doesn't persist logs
+	dummyLogger := &dummyLogPersister{}
 
-	playbookPath := filepath.Join(input.Request.DeploymentSource.ApplicationDirectory, playbookConfig.Path)
-	
-	// Build command arguments (similar to executeAnsiblePlaybook but with --check --diff)
-	args := []string{playbookPath, "--check", "--diff"}
+	appDir := input.Request.DeploymentSource.ApplicationDirectory
 
-	// Inventory
-	inventory := playbookConfig.Inventory
-	if inventory == "" {
-		inventory = dtConfig.Inventory
-	}
-	if inventory != "" {
-		inventoryPath := filepath.Join(input.Request.DeploymentSource.ApplicationDirectory, inventory)
-		args = append(args, "-i", inventoryPath)
-	}
-
-	// Extra variables
-	if len(playbookConfig.ExtraVars) > 0 {
-		extraVars := make([]string, 0, len(playbookConfig.ExtraVars))
-		for k, v := range playbookConfig.ExtraVars {
-			extraVars = append(extraVars, fmt.Sprintf("%s=%s", k, v))
-		}
-		args = append(args, "--extra-vars", strings.Join(extraVars, " "))
-	}
-
-	// SSH settings from deploy target
-	if dtConfig.SSH != nil {
-		if dtConfig.SSH.User != "" {
-			args = append(args, "--user", dtConfig.SSH.User)
-		}
-		if dtConfig.SSH.PrivateKeyFile != "" {
-			keyPath := filepath.Join(input.Request.DeploymentSource.ApplicationDirectory, dtConfig.SSH.PrivateKeyFile)
-			args = append(args, "--private-key", keyPath)
-		}
-		if dtConfig.SSH.Port > 0 {
-			args = append(args, "--extra-vars", fmt.Sprintf("ansible_ssh_port=%d", dtConfig.SSH.Port))
-		}
-	}
+	// Build command arguments using helper functions with forced check and diff modes
+	ansiblePath, args := p.buildAnsibleCommand(dtConfig, playbookConfig, appDir, true, true, dummyLogger)
 
 	// Apply timeout - shorter timeout for check mode
 	checkCtx := ctx
@@ -750,16 +580,10 @@ func (p *Plugin) runAnsibleCheckMode(ctx context.Context, cfg *config.AnsiblePlu
 	}
 
 	cmd := exec.CommandContext(checkCtx, ansiblePath, args...)
-	cmd.Dir = input.Request.DeploymentSource.ApplicationDirectory
+	cmd.Dir = appDir
 
-	// Set up environment variables
-	env := os.Environ()
-	if len(dtConfig.Env) > 0 {
-		for key, value := range dtConfig.Env {
-			env = append(env, fmt.Sprintf("%s=%s", key, value))
-		}
-	}
-	cmd.Env = env
+	// Set up environment variables using helper function
+	cmd.Env = p.setupEnvironment(dtConfig)
 
 	output, err := cmd.CombinedOutput()
 	outputStr := string(output)
@@ -788,3 +612,232 @@ func getDeployTargetName(dts []*sdk.DeployTarget[config.AnsibleDeployTargetConfi
 	}
 	return "default"
 }
+
+// Helper functions for building ansible command arguments
+
+// buildAnsibleExecutable returns the ansible-playbook executable path
+func (p *Plugin) buildAnsibleExecutable(dtConfig *config.AnsibleDeployTargetConfig, lp sdk.StageLogPersister) string {
+	ansiblePath := dtConfig.AnsiblePath
+	if ansiblePath == "" {
+		ansiblePath = "ansible-playbook"
+	}
+	lp.Infof("⚙️  Ansible executable: %s", ansiblePath)
+	return ansiblePath
+}
+
+// addInventoryArgs adds inventory arguments to the command
+func (p *Plugin) addInventoryArgs(args []string, dtConfig *config.AnsibleDeployTargetConfig, playbookConfig *config.AnsiblePlaybookManifest, appDir string, lp sdk.StageLogPersister) []string {
+	inventory := playbookConfig.Inventory
+	if inventory == "" {
+		inventory = dtConfig.Inventory
+	}
+	if inventory != "" {
+		inventoryPath := filepath.Join(appDir, inventory)
+		args = append(args, "-i", inventoryPath)
+		lp.Infof("📋 Using inventory: %s", inventoryPath)
+	} else {
+		lp.Infof("📋 No inventory specified, using default")
+	}
+	return args
+}
+
+// addVaultArgs adds vault password file arguments to the command
+func (p *Plugin) addVaultArgs(args []string, dtConfig *config.AnsibleDeployTargetConfig, playbookConfig *config.AnsiblePlaybookManifest, appDir string, lp sdk.StageLogPersister) []string {
+	vault := playbookConfig.Vault
+	if vault == "" {
+		vault = dtConfig.Vault
+	}
+	if vault != "" {
+		vaultPath := filepath.Join(appDir, vault)
+		args = append(args, "--vault-password-file", vaultPath)
+		lp.Infof("🔐 Using vault password file: %s", vaultPath)
+	}
+	return args
+}
+
+// addExtraVarsArgs adds extra variables arguments to the command
+func (p *Plugin) addExtraVarsArgs(args []string, playbookConfig *config.AnsiblePlaybookManifest, lp sdk.StageLogPersister) []string {
+	if len(playbookConfig.ExtraVars) > 0 {
+		extraVars := make([]string, 0, len(playbookConfig.ExtraVars))
+		for k, v := range playbookConfig.ExtraVars {
+			extraVars = append(extraVars, fmt.Sprintf("%s=%s", k, v))
+		}
+		args = append(args, "--extra-vars", strings.Join(extraVars, " "))
+		lp.Infof("🔧 Extra variables: %v", playbookConfig.ExtraVars)
+	}
+	return args
+}
+
+// addTagsArgs adds tags and skip-tags arguments to the command
+func (p *Plugin) addTagsArgs(args []string, playbookConfig *config.AnsiblePlaybookManifest, lp sdk.StageLogPersister) []string {
+	// Tags
+	if len(playbookConfig.Tags) > 0 {
+		args = append(args, "--tags", strings.Join(playbookConfig.Tags, ","))
+		lp.Infof("🏷️  Running with tags: %v", playbookConfig.Tags)
+	}
+
+	// Skip tags
+	if len(playbookConfig.SkipTags) > 0 {
+		args = append(args, "--skip-tags", strings.Join(playbookConfig.SkipTags, ","))
+		lp.Infof("🚫 Skipping tags: %v", playbookConfig.SkipTags)
+	}
+
+	return args
+}
+
+// addLimitArgs adds limit arguments to the command
+func (p *Plugin) addLimitArgs(args []string, playbookConfig *config.AnsiblePlaybookManifest, lp sdk.StageLogPersister) []string {
+	if playbookConfig.Limit != "" {
+		args = append(args, "--limit", playbookConfig.Limit)
+		lp.Infof("🎯 Limiting to hosts: %s", playbookConfig.Limit)
+	}
+	return args
+}
+
+// addVerbosityArgs adds verbosity arguments to the command
+func (p *Plugin) addVerbosityArgs(args []string, playbookConfig *config.AnsiblePlaybookManifest, lp sdk.StageLogPersister) []string {
+	if playbookConfig.Verbosity > 0 {
+		verbosity := strings.Repeat("v", playbookConfig.Verbosity)
+		args = append(args, fmt.Sprintf("-%s", verbosity))
+		lp.Infof("📢 Verbosity level: %d", playbookConfig.Verbosity)
+	}
+	return args
+}
+
+// addModeArgs adds check and diff mode arguments to the command
+func (p *Plugin) addModeArgs(args []string, playbookConfig *config.AnsiblePlaybookManifest, forceCheck bool, forceDiff bool, lp sdk.StageLogPersister) []string {
+	// Check mode
+	if playbookConfig.CheckMode || forceCheck {
+		args = append(args, "--check")
+		lp.Infof("🔍 Running in check mode (dry-run)")
+	}
+
+	// Diff mode
+	if playbookConfig.DiffMode || forceDiff {
+		args = append(args, "--diff")
+		lp.Infof("📊 Diff mode enabled")
+	}
+
+	return args
+}
+
+// addSSHArgs adds SSH-related arguments to the command
+func (p *Plugin) addSSHArgs(args []string, dtConfig *config.AnsibleDeployTargetConfig, playbookConfig *config.AnsiblePlaybookManifest, appDir string, lp sdk.StageLogPersister) []string {
+	// Private key from playbook config (takes precedence)
+	if playbookConfig.PrivateKey != "" {
+		keyPath := filepath.Join(appDir, playbookConfig.PrivateKey)
+		args = append(args, "--private-key", keyPath)
+		lp.Infof("🔑 Using private key: %s", keyPath)
+	}
+
+	// Remote user from playbook config
+	if playbookConfig.RemoteUser != "" {
+		args = append(args, "--user", playbookConfig.RemoteUser)
+		lp.Infof("👤 Remote user: %s", playbookConfig.RemoteUser)
+	}
+
+	// Become user from playbook config
+	if playbookConfig.BecomeUser != "" {
+		args = append(args, "--become", "--become-user", playbookConfig.BecomeUser)
+		lp.Infof("🔓 Become user: %s", playbookConfig.BecomeUser)
+	}
+
+	// SSH settings from deploy target (fallback/additional)
+	if dtConfig.SSH != nil {
+		if dtConfig.SSH.User != "" && playbookConfig.RemoteUser == "" {
+			args = append(args, "--user", dtConfig.SSH.User)
+			lp.Infof("👤 SSH user (from deploy target): %s", dtConfig.SSH.User)
+		}
+		if dtConfig.SSH.PrivateKeyFile != "" && playbookConfig.PrivateKey == "" {
+			keyPath := filepath.Join(appDir, dtConfig.SSH.PrivateKeyFile)
+			args = append(args, "--private-key", keyPath)
+			lp.Infof("🔑 SSH private key (from deploy target): %s", keyPath)
+		}
+		if dtConfig.SSH.Port > 0 {
+			args = append(args, "--extra-vars", fmt.Sprintf("ansible_ssh_port=%d", dtConfig.SSH.Port))
+			lp.Infof("🔌 SSH port (from deploy target): %d", dtConfig.SSH.Port)
+		}
+	}
+
+	return args
+}
+
+// addDeployTargetArgs adds deploy target specific arguments to the command
+func (p *Plugin) addDeployTargetArgs(args []string, dtConfig *config.AnsibleDeployTargetConfig, lp sdk.StageLogPersister) []string {
+	// Connection timeout from deploy target
+	if dtConfig.ConnectionTimeout > 0 {
+		args = append(args, "--extra-vars", fmt.Sprintf("ansible_ssh_timeout=%d", dtConfig.ConnectionTimeout))
+		lp.Infof("⏰ SSH connection timeout: %d seconds", dtConfig.ConnectionTimeout)
+	}
+
+	// Host key checking
+	if dtConfig.HostKeyChecking != nil {
+		hostKeyCheck := "True"
+		if !*dtConfig.HostKeyChecking {
+			hostKeyCheck = "False"
+		}
+		args = append(args, "--extra-vars", fmt.Sprintf("ansible_ssh_host_key_checking=%s", hostKeyCheck))
+		lp.Infof("🔒 SSH host key checking: %s", hostKeyCheck)
+	}
+
+	// Extra flags from deploy target
+	if len(dtConfig.ExtraFlags) > 0 {
+		args = append(args, dtConfig.ExtraFlags...)
+		lp.Infof("🔧 Extra flags (from deploy target): %v", dtConfig.ExtraFlags)
+	}
+
+	return args
+}
+
+// setupEnvironment sets up environment variables for the command
+func (p *Plugin) setupEnvironment(dtConfig *config.AnsibleDeployTargetConfig) []string {
+	env := os.Environ()
+	if len(dtConfig.Env) > 0 {
+		for key, value := range dtConfig.Env {
+			env = append(env, fmt.Sprintf("%s=%s", key, value))
+		}
+	}
+	return env
+}
+
+// buildAnsibleCommand builds the complete ansible-playbook command with all arguments
+func (p *Plugin) buildAnsibleCommand(
+	dtConfig *config.AnsibleDeployTargetConfig,
+	playbookConfig *config.AnsiblePlaybookManifest,
+	appDir string,
+	forceCheck bool,
+	forceDiff bool,
+	lp sdk.StageLogPersister,
+) (string, []string) {
+	// Get ansible executable
+	ansiblePath := p.buildAnsibleExecutable(dtConfig, lp)
+
+	// Build playbook path
+	playbookPath := filepath.Join(appDir, playbookConfig.Path)
+	args := []string{playbookPath}
+
+	// Add all argument types
+	args = p.addModeArgs(args, playbookConfig, forceCheck, forceDiff, lp)
+	args = p.addInventoryArgs(args, dtConfig, playbookConfig, appDir, lp)
+	args = p.addVaultArgs(args, dtConfig, playbookConfig, appDir, lp)
+	args = p.addExtraVarsArgs(args, playbookConfig, lp)
+	args = p.addTagsArgs(args, playbookConfig, lp)
+	args = p.addLimitArgs(args, playbookConfig, lp)
+	args = p.addVerbosityArgs(args, playbookConfig, lp)
+	args = p.addSSHArgs(args, dtConfig, playbookConfig, appDir, lp)
+	args = p.addDeployTargetArgs(args, dtConfig, lp)
+
+	return ansiblePath, args
+}
+
+// dummyLogPersister is a simple log persister that doesn't actually persist logs
+// Used for check mode where we don't have access to stage log persister
+type dummyLogPersister struct{}
+
+func (d *dummyLogPersister) Write(log []byte) (int, error)            { return len(log), nil }
+func (d *dummyLogPersister) Info(log string)                          {}
+func (d *dummyLogPersister) Infof(format string, a ...interface{})    {}
+func (d *dummyLogPersister) Success(log string)                       {}
+func (d *dummyLogPersister) Successf(format string, a ...interface{}) {}
+func (d *dummyLogPersister) Error(log string)                         {}
+func (d *dummyLogPersister) Errorf(format string, a ...interface{})   {}
