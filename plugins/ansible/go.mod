@@ -1,8 +1,8 @@
 module github.com/pipe-cd/community-plugins/plugins/ansible
 
-go 1.24.3
+go 1.25.0
 
-require github.com/pipe-cd/piped-plugin-sdk-go v0.0.0-20250716110212-6c11f09a1f8d
+require github.com/pipe-cd/piped-plugin-sdk-go v0.3.0
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -32,7 +32,7 @@ require (
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.2-0.20181231171920-c182affec369 // indirect
-	github.com/pipe-cd/pipecd v0.52.1-0.20250704040938-472e02fa6fa1 // indirect
+	github.com/pipe-cd/pipecd v0.54.0-rc1.0.20250912082650-0b949bb7aac9 // indirect
 	github.com/prometheus/client_golang v1.12.1 // indirect
 	github.com/prometheus/client_model v0.5.0 // indirect
 	github.com/prometheus/common v0.32.1 // indirect
@@ -51,8 +51,8 @@ require (
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/crypto v0.36.0 // indirect
 	golang.org/x/net v0.38.0 // indirect
-	golang.org/x/oauth2 v0.21.0 // indirect
-	golang.org/x/sync v0.12.0 // indirect
+	golang.org/x/oauth2 v0.30.0 // indirect
+	golang.org/x/sync v0.16.0 // indirect
 	golang.org/x/sys v0.31.0 // indirect
 	golang.org/x/text v0.23.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
